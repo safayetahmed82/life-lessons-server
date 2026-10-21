@@ -4,6 +4,7 @@ import cors from "cors";
 import { toNodeHandler } from "better-auth/node";
 import { client } from "./db.js";
 import { auth } from "./auth.js";
+import lessonRoutes from "./routes/lessonRoutes.js";
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(
 app.all("/api/auth/*splat", toNodeHandler(auth));
 
 app.use(express.json());
+app.use("/api/lessons", lessonRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "LifeLessons API is running" });
