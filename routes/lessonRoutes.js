@@ -7,6 +7,7 @@ const router = express.Router();
 const lessons = db.collection("lessons");
 const canManage = (lesson, user) =>
   lesson.creatorId === user.id || user.role === "admin";
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 router.post("/", verifyUser, async (req, res) => {
   try {
@@ -51,6 +52,49 @@ router.post("/", verifyUser, async (req, res) => {
 
     const result = await lessons.insertOne(lesson);
     res.status(201).json({ ...lesson, _id: result.insertedId });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+router.get("/", async (req, res) => {
+  try {
+    const { search, category, tone, sort } = req.query;
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const limit = Math.min(Number(req.query.limit) || 6, 24);
+
+    const filter = { visibility: "Public" };
+
+    if (search) {
+      const pattern = { $regex: escapeRegex(search), $options: "i" };
+      filter.$or = [{ title: pattern }, { description: pattern }];
+    }
+    if (category) filter.category = category;
+    if (tone) filter.emotionalTone = tone;
+
+    let sortOption = { createdAt: -1 };
+    if (sort === "mostSaved") {
+      sortOption = { favoritesCount: -1, createdAt: -1 };
+    }
+
+    const total = await lessons.countDocuments(filter);
+    const found = await lessons
+      .find(filter)
+      .sort(sortOption)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+
+    const preview = found.map((lesson) => ({
+      ...lesson,
+      description: lesson.description.slice(0, 120),
+    }));
+
+    res.json({
+      lessons: preview,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
