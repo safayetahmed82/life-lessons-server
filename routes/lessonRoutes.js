@@ -5,8 +5,14 @@ import { ObjectId } from "mongodb";
 
 const router = express.Router();
 const lessons = db.collection("lessons");
+const favorites = db.collection("favorites");
 const canManage = (lesson, user) =>
   lesson.creatorId === user.id || user.role === "admin";
+const canView = (lesson, user) => {
+  if (canManage(lesson, user)) return true;
+  if (lesson.visibility !== "Public") return false;
+  return lesson.accessLevel !== "Premium" || user.isPremium === true;
+};
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 router.post("/", verifyUser, async (req, res) => {
@@ -122,11 +128,35 @@ router.get("/:id", verifyUser, async (req, res) => {
       return res.status(404).json({ message: "Lesson not found" });
     }
 
-    if (lesson.visibility === "Private" && !canManage(lesson, req.user)) {
-      return res.status(403).json({ message: "This lesson is private" });
+    if (!canView(lesson, req.user)) {
+      if (lesson.visibility === "Private") {
+        return res.status(403).json({ message: "This lesson is private" });
+      }
+      return res.status(403).json({
+        locked: true,
+        message: "This is a Premium lesson",
+        title: lesson.title,
+        category: lesson.category,
+        emotionalTone: lesson.emotionalTone,
+      });
     }
 
-    res.json(lesson);
+    const authorLessonCount = await lessons.countDocuments({
+      creatorId: lesson.creatorId,
+    });
+    const favorite = await favorites.findOne({
+      userId: req.user.id,
+      lessonId: req.params.id,
+    });
+
+    const { likes, ...rest } = lesson;
+
+    res.json({
+      ...rest,
+      liked: likes.includes(req.user.id),
+      favorited: Boolean(favorite),
+      authorLessonCount,
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -205,6 +235,76 @@ router.delete("/:id", verifyUser, async (req, res) => {
     await db.collection("comments").deleteMany({ lessonId: req.params.id });
 
     res.json({ message: "Lesson deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+router.post("/:id/like", verifyUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const lesson = await lessons.findOne({ _id: new ObjectId(req.params.id) });
+    if (!lesson || !canView(lesson, req.user)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const alreadyLiked = lesson.likes.includes(req.user.id);
+
+    if (alreadyLiked) {
+      await lessons.updateOne(
+        { _id: lesson._id },
+        { $pull: { likes: req.user.id }, $inc: { likesCount: -1 } }
+      );
+    } else {
+      await lessons.updateOne(
+        { _id: lesson._id },
+        { $addToSet: { likes: req.user.id }, $inc: { likesCount: 1 } }
+      );
+    }
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: lesson.likesCount + (alreadyLiked ? -1 : 1),
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.post("/:id/favorite", verifyUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const lesson = await lessons.findOne({ _id: new ObjectId(req.params.id) });
+    if (!lesson || !canView(lesson, req.user)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const existing = await favorites.findOne({
+      userId: req.user.id,
+      lessonId: req.params.id,
+    });
+
+    if (existing) {
+      await favorites.deleteOne({ _id: existing._id });
+      await lessons.updateOne({ _id: lesson._id }, { $inc: { favoritesCount: -1 } });
+    } else {
+      await favorites.insertOne({
+        userId: req.user.id,
+        lessonId: req.params.id,
+        savedAt: new Date(),
+      });
+      await lessons.updateOne({ _id: lesson._id }, { $inc: { favoritesCount: 1 } });
+    }
+
+    res.json({
+      favorited: !existing,
+      favoritesCount: lesson.favoritesCount + (existing ? -1 : 1),
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
