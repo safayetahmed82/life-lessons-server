@@ -92,9 +92,9 @@ router.get("/", async (req, res) => {
       .limit(limit)
       .toArray();
 
-    const preview = found.map((lesson) => ({
-      ...lesson,
-      description: lesson.description.slice(0, 120),
+    const preview = found.map(({ likes, ...rest }) => ({
+      ...rest,
+      description: rest.description.slice(0, 120),
     }));
 
     res.json({
@@ -115,6 +115,73 @@ router.get("/mine", verifyUser, async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
     res.json(myLessons);
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+router.get("/favorites/mine", verifyUser, async (req, res) => {
+  try {
+    const saved = await favorites
+      .find({ userId: req.user.id })
+      .sort({ savedAt: -1 })
+      .toArray();
+
+    const ids = saved
+      .filter((item) => ObjectId.isValid(item.lessonId))
+      .map((item) => new ObjectId(item.lessonId));
+
+    const found = await lessons.find({ _id: { $in: ids } }).toArray();
+
+    const order = saved.map((item) => item.lessonId);
+    const visible = found
+      .filter((lesson) => canView(lesson, req.user))
+      .map(({ likes, ...rest }) => ({
+        ...rest,
+        description: rest.description.slice(0, 120),
+      }))
+      .sort(
+        (a, b) => order.indexOf(String(a._id)) - order.indexOf(String(b._id)),
+      );
+
+    res.json(visible);
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.get("/author/:authorId", async (req, res) => {
+  try {
+    const { authorId } = req.params;
+    if (!ObjectId.isValid(authorId)) {
+      return res.status(404).json({ message: "Author not found" });
+    }
+
+    const author = await db
+      .collection("user")
+      .findOne({ _id: new ObjectId(authorId) });
+    if (!author) {
+      return res.status(404).json({ message: "Author not found" });
+    }
+
+    const authorLessons = await lessons
+      .find({ creatorId: authorId, visibility: "Public" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const preview = authorLessons.map(({ likes, ...rest }) => ({
+      ...rest,
+      description: rest.description.slice(0, 120),
+    }));
+
+    res.json({
+      author: {
+        id: authorId,
+        name: author.name,
+        image: author.image,
+        isPremium: author.isPremium === true,
+      },
+      lessons: preview,
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -235,7 +302,9 @@ router.delete("/:id", verifyUser, async (req, res) => {
     await lessons.deleteOne({ _id: lesson._id });
     await db.collection("favorites").deleteMany({ lessonId: req.params.id });
     await db.collection("comments").deleteMany({ lessonId: req.params.id });
-    await db.collection("lessonsReports").deleteMany({ lessonId: req.params.id });
+    await db
+      .collection("lessonsReports")
+      .deleteMany({ lessonId: req.params.id });
 
     res.json({ message: "Lesson deleted successfully" });
   } catch (error) {
@@ -258,12 +327,12 @@ router.post("/:id/like", verifyUser, async (req, res) => {
     if (alreadyLiked) {
       await lessons.updateOne(
         { _id: lesson._id },
-        { $pull: { likes: req.user.id }, $inc: { likesCount: -1 } }
+        { $pull: { likes: req.user.id }, $inc: { likesCount: -1 } },
       );
     } else {
       await lessons.updateOne(
         { _id: lesson._id },
-        { $addToSet: { likes: req.user.id }, $inc: { likesCount: 1 } }
+        { $addToSet: { likes: req.user.id }, $inc: { likesCount: 1 } },
       );
     }
 
@@ -294,14 +363,20 @@ router.post("/:id/favorite", verifyUser, async (req, res) => {
 
     if (existing) {
       await favorites.deleteOne({ _id: existing._id });
-      await lessons.updateOne({ _id: lesson._id }, { $inc: { favoritesCount: -1 } });
+      await lessons.updateOne(
+        { _id: lesson._id },
+        { $inc: { favoritesCount: -1 } },
+      );
     } else {
       await favorites.insertOne({
         userId: req.user.id,
         lessonId: req.params.id,
         savedAt: new Date(),
       });
-      await lessons.updateOne({ _id: lesson._id }, { $inc: { favoritesCount: 1 } });
+      await lessons.updateOne(
+        { _id: lesson._id },
+        { $inc: { favoritesCount: 1 } },
+      );
     }
 
     res.json({
@@ -350,7 +425,9 @@ router.post("/:id/comments", verifyUser, async (req, res) => {
       return res.status(400).json({ message: "Please write a comment first" });
     }
     if (text.length > 500) {
-      return res.status(400).json({ message: "Comments can be 500 characters at most" });
+      return res
+        .status(400)
+        .json({ message: "Comments can be 500 characters at most" });
     }
 
     const comment = {
@@ -399,7 +476,9 @@ router.post("/:id/report", verifyUser, async (req, res) => {
       reporterUserId: req.user.id,
     });
     if (already) {
-      return res.status(400).json({ message: "You have already reported this lesson" });
+      return res
+        .status(400)
+        .json({ message: "You have already reported this lesson" });
     }
 
     await reports.insertOne({
