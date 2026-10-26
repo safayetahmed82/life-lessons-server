@@ -6,6 +6,8 @@ import { ObjectId } from "mongodb";
 const router = express.Router();
 const lessons = db.collection("lessons");
 const favorites = db.collection("favorites");
+const comments = db.collection("comments");
+const reports = db.collection("lessonsReports");
 const canManage = (lesson, user) =>
   lesson.creatorId === user.id || user.role === "admin";
 const canView = (lesson, user) => {
@@ -233,6 +235,7 @@ router.delete("/:id", verifyUser, async (req, res) => {
     await lessons.deleteOne({ _id: lesson._id });
     await db.collection("favorites").deleteMany({ lessonId: req.params.id });
     await db.collection("comments").deleteMany({ lessonId: req.params.id });
+    await db.collection("lessonsReports").deleteMany({ lessonId: req.params.id });
 
     res.json({ message: "Lesson deleted successfully" });
   } catch (error) {
@@ -305,6 +308,111 @@ router.post("/:id/favorite", verifyUser, async (req, res) => {
       favorited: !existing,
       favoritesCount: lesson.favoritesCount + (existing ? -1 : 1),
     });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+router.get("/:id/comments", verifyUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const lesson = await lessons.findOne({ _id: new ObjectId(req.params.id) });
+    if (!lesson || !canView(lesson, req.user)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const list = await comments
+      .find({ lessonId: req.params.id })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(list);
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.post("/:id/comments", verifyUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const lesson = await lessons.findOne({ _id: new ObjectId(req.params.id) });
+    if (!lesson || !canView(lesson, req.user)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const text = (req.body.text || "").trim();
+    if (!text) {
+      return res.status(400).json({ message: "Please write a comment first" });
+    }
+    if (text.length > 500) {
+      return res.status(400).json({ message: "Comments can be 500 characters at most" });
+    }
+
+    const comment = {
+      lessonId: req.params.id,
+      userId: req.user.id,
+      userName: req.user.name,
+      userPhoto: req.user.image,
+      text,
+      createdAt: new Date(),
+    };
+
+    const result = await comments.insertOne(comment);
+    res.status(201).json({ ...comment, _id: result.insertedId });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+const reportReasons = [
+  "Inappropriate Content",
+  "Hate Speech or Harassment",
+  "Misleading or False Information",
+  "Spam or Promotional Content",
+  "Sensitive or Disturbing Content",
+  "Other",
+];
+
+router.post("/:id/report", verifyUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const lesson = await lessons.findOne({ _id: new ObjectId(req.params.id) });
+    if (!lesson || !canView(lesson, req.user)) {
+      return res.status(404).json({ message: "Lesson not found" });
+    }
+
+    const { reason } = req.body;
+    if (!reportReasons.includes(reason)) {
+      return res.status(400).json({ message: "Please choose a reason" });
+    }
+
+    const already = await reports.findOne({
+      lessonId: req.params.id,
+      reporterUserId: req.user.id,
+    });
+    if (already) {
+      return res.status(400).json({ message: "You have already reported this lesson" });
+    }
+
+    await reports.insertOne({
+      lessonId: req.params.id,
+      lessonTitle: lesson.title,
+      reporterUserId: req.user.id,
+      reporterName: req.user.name,
+      reporterEmail: req.user.email,
+      reason,
+      timestamp: new Date(),
+    });
+
+    res.status(201).json({ message: "Report submitted" });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
