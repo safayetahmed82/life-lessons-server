@@ -6,6 +6,7 @@ import { client } from "./db.js";
 import { auth } from "./auth.js";
 import lessonRoutes from "./routes/lessonRoutes.js";
 import paymentRoutes, { stripeWebhook } from "./routes/paymentRoutes.js";
+import dashboardRoutes from "./routes/dashboardRoutes.js";
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use(express.json());
 
 app.use("/api/lessons", lessonRoutes);
 app.use(paymentRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use(express.json());
 app.use("/api/lessons", lessonRoutes);
