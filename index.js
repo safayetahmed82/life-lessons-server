@@ -8,6 +8,7 @@ import lessonRoutes from "./routes/lessonRoutes.js";
 import paymentRoutes, { stripeWebhook } from "./routes/paymentRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import homeRoutes from "./routes/homeRoutes.js";
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use("/api/lessons", lessonRoutes);
 app.use(paymentRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/home", homeRoutes);
 
 app.use(express.json());
 app.use("/api/lessons", lessonRoutes);
